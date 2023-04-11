@@ -4,3 +4,6 @@
 [submodule "PDE-Control"]
 	path = PDE_Control
 	url = https://github.com/tailintalent/PDE-Control.git
+[submodule "MP_Neural_PDE_Solvers"]
+	path = MP_Neural_PDE_Solvers
+	url = https://github.com/49takashi/MP_Neural_PDE_Solvers.git
