@@ -22,6 +22,7 @@ from le_pde.datasets.mppde1d_dataset import MPPDE1D
 from le_pde.datasets.fno_dataset import FNOData
 from le_pde.datasets.karman3d_dataset import Karman3D
 from le_pde.datasets.movinggas_dataset import MovingGas
+from chaotic_ellipse_dataset import Ellipse
 from le_pde.pytorch_net.util import ddeepcopy as deepcopy, Batch, make_dir
 from le_pde.utils import p, PDE_PATH, get_elements, is_diagnose, get_keys_values, loss_op, to_tuple_shape, parse_string_idx_to_list, parse_multi_step, get_device, Channel_Gen, process_data_for_CNN, get_activation, get_normalization, Mean, Flatten, Permute, Reshape, to_cpu, add_data_noise
 
@@ -160,6 +161,26 @@ def load_data(args, **kwargs):
                     is_y_variable_length=args.is_y_variable_length,
                 )
             pyg_dataset_test = FNOData(
+                dataset=args.dataset,
+                input_steps=args.input_steps * args.temporal_bundle_steps,
+                output_steps=max_pred_steps,
+                time_interval=args.time_interval,
+                is_y_diff=args.is_y_diff,
+                is_train=False,
+                is_y_variable_length=args.is_y_variable_length,
+            )
+        elif "ellipse" in args.dataset:
+            if not args.is_test_only:
+                pyg_dataset_train_val = Ellipse(
+                    dataset=args.dataset,
+                    input_steps=args.input_steps * args.temporal_bundle_steps,
+                    output_steps=max_pred_steps,
+                    time_interval=args.time_interval,
+                    is_y_diff=args.is_y_diff,
+                    is_train=True,
+                    is_y_variable_length=args.is_y_variable_length,
+                )
+            pyg_dataset_test = Ellipse(
                 dataset=args.dataset,
                 input_steps=args.input_steps * args.temporal_bundle_steps,
                 output_steps=max_pred_steps,

@@ -22,7 +22,7 @@ from le_pde.pytorch_net.util import lcm, L2Loss, Attr_Dict, Printer
 p = Printer(n_digits=6)
 
 INVALID_VALUE = -200
-PDE_PATH = "data/"
+PDE_PATH = "./dataset/"
 EXP_PATH = "./results/"
 DESIGN_PATH = ".."
 MPPDE1D_PATH = "mppde1d_data/"
@@ -351,7 +351,6 @@ def loss_op(
                 kwargs["is_not_nan_batch"] = is_not_nan_batch[..., None]  # [n_nodes, output_steps, 1]
         else:
             is_not_nan_batch = None
-
         if dyn_dims is not None:
             y_core = y_core[..., -dyn_dims[key]:]
         if mask is not None:
