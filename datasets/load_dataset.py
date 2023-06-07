@@ -115,6 +115,8 @@ def load_data(args, **kwargs):
     train_fraction = args.train_fraction
     multi_step_dict = parse_multi_step(args.multi_step)
     latent_multi_step_dict = parse_multi_step(args.latent_multi_step if args.latent_multi_step is not None else args.multi_step)
+    # import pdb
+    # pdb.set_trace()
     max_pred_steps = max(list(multi_step_dict.keys()) + list(latent_multi_step_dict.keys()) + [1]) * args.temporal_bundle_steps
     filename_train_val = os.path.join(PDE_PATH, "deepsnap", "{}_train_val_in_{}_out_{}{}{}{}{}{}.p".format(
         args.dataset, args.input_steps * args.temporal_bundle_steps, max_pred_steps, 

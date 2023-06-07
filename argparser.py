@@ -75,6 +75,8 @@ def arg_parse():
                         help='Stride for the sectors. Default "-1".')
     parser.add_argument('--is_y_variable_length', type=str2bool, nargs='?', const=False, default=False,
                         help='Whether to use difference as y.')
+    parser.add_argument('--is_offmask', type=str2bool, nargs='?', const=False, default=False,
+                        help='Whether to use mask in computing loss')
     # Model:
     ## Global:
     parser.add_argument('--algo', type=str,
@@ -298,6 +300,7 @@ def arg_parse():
         sector_stride="-1",
         is_test_only=False,
         is_y_variable_length=False,
+        is_offmask=False,
 
         ## Reg:
         reg_type="None",

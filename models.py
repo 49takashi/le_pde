@@ -174,6 +174,7 @@ class Contrastive(nn.Module):
         reg_type_list = parse_reg_type(self.reg_type)
         encoder_list = []
         if self.encoder_type == "cnn":
+            pdb.set_trace()
             self.encoder = CNNEncoder(
                 in_channels=input_size,
                 out_channels=latent_size,
@@ -255,6 +256,8 @@ class Contrastive(nn.Module):
             raise Exception("encoder_type {} is not valid!".format(self.encoder_type))
 
         if self.static_encoder_type == "cnn-s":
+            
+            # pdb.set_trace()
             assert not (self.static_latent_size == 0 or self.static_input_size["n0"] == 0)
             self.static_encoder = CNN_Encoder(
                 in_channels=static_input_size,
@@ -726,6 +729,7 @@ class Contrastive(nn.Module):
             else:
                 latent_recons = latent_forward = latent
             if self.static_encoder_type != "None":
+                # pdb.set_trace()
                 if self.static_encoder_type.startswith("param"):
                     if self.static_encoder_type.startswith("param-expand"):
                         static_latent = data.param["n0"]
@@ -738,6 +742,7 @@ class Contrastive(nn.Module):
                             static_latent = self.static_encoder(static_data)
                 else:
                     if static_data is None:
+                        # pdb.set_trace()
                         static_data = deepcopy(data)
                         static_dims = data.node_feature["n0"].shape[-1] - dict(to_tuple_shape(data.dyn_dims))["n0"] - dict(to_tuple_shape(data.compute_func))["n0"][0]
                         static_feature = data.node_feature["n0"][:,:,:static_dims]
@@ -762,6 +767,7 @@ class Contrastive(nn.Module):
                 # latent: [B, latent_size]
                 if self.static_encoder_type != "None":
                     if self.n_latent_levs == 1:
+                        # pdb.set_trace()
                         latent_forward = torch.cat([latent_forward, static_latent], -1)
                     else:
                         latent_forward = tuple(torch.cat([latent_ele, static_latent_ele], 1) if latent_ele is not None else None for latent_ele, static_latent_ele in zip(latent_forward, static_latent))
@@ -986,6 +992,7 @@ class Contrastive(nn.Module):
                 y_idx_recons = np.arange(
                     data.node_feature[list(data.node_feature)[0]].shape[-2] - args.temporal_bundle_steps, 
                     data.node_feature[list(data.node_feature)[0]].shape[-2]).tolist()
+                # pdb.set_trace()
                 loss_recons = loss_op(
                     info["recons"], data.node_feature, data.mask,
                     y_idx=y_idx_recons,
@@ -1169,6 +1176,7 @@ def load_model(model_dict, device, multi_gpu=False, **kwargs):
             temporal_bundle_steps=model_dict["temporal_bundle_steps"] if "temporal_bundle_steps" in model_dict else 1,
             static_encoder_type=model_dict["static_encoder_type"] if "static_encoder_type" in model_dict else "None",
             static_latent_size=model_dict["static_latent_size"] if "static_latent_size" in model_dict else 0,
+            static_param_size=model_dict["static_param_size"] if "static_param_size" in model_dict else 0,
         )
     elif model_type == "Contrastive":
         #pdb.set_trace()
@@ -1243,6 +1251,7 @@ def get_model(
     part_keys = to_tuple_shape(data_eg.part_keys)
     dyn_dims = dict(to_tuple_shape(data_eg.dyn_dims))
     static_input_size = {"n0": 0}
+    # pdb.set_trace()
     if "node_feature" in data_eg:
         # The data object contains the actual data:
         output_size = {key: data_eg.node_label[key].shape[-1] + 1 if key in part_keys else data_eg.node_label[key].shape[-1] for key in data_eg.node_label}
@@ -1251,7 +1260,8 @@ def get_model(
             if args.static_encoder_type.startswith("param"):
                 static_input_size = {key: data_eg.param[key].shape[-1] for key in input_size}
             else:
-                static_input_size = {key: input_size[key]-dyn_dims[key] for key in input_size}
+                #input_steps = 
+                static_input_size = {key: input_size[key]-dyn_dims[key]*data_eg.node_feature[key].shape[-2] for key in input_size}
     else:
         # The data object contains necessary information for JIT loading:
         static_dims = dict(to_tuple_shape(data_eg.static_dims))
@@ -1311,6 +1321,8 @@ def get_model(
             vae_mode=args.vae_mode,
         ).to(device)
     elif args.algo.startswith("fno"):
+        if args.static_encoder_type.startswith("param"):
+            static_param_size = data_eg.param["n0"].reshape(1, -1).shape[-1]
         """fno-w20-m12: fno with width=20 and modes=12. Default"""
         algo_dict = {}
         for ele in args.algo.split("-")[1:]:
@@ -1329,6 +1341,7 @@ def get_model(
             temporal_bundle_steps=args.temporal_bundle_steps,
             static_encoder_type=args.static_encoder_type,
             static_latent_size=args.static_latent_size,
+            static_param_size = static_param_size,
         ).to(device)
     else:
         raise Exception("Algo {} is not supported!".format(args.algo))
@@ -2328,6 +2341,7 @@ class FNOModel(nn.Module):
         temporal_bundle_steps=1,
         static_encoder_type="None",
         static_latent_size=0,
+        static_param_size=0,
     ):
         super().__init__()
         self.input_size = input_size  # steps*feature_size
@@ -2337,6 +2351,7 @@ class FNOModel(nn.Module):
         self.temporal_bundle_steps = temporal_bundle_steps
         self.static_encoder_type = static_encoder_type
         self.static_latent_size = static_latent_size
+        self.static_param_size = static_param_size
         self.pos_dims = len(input_shape)
         static_latent_size_core = self.static_latent_size if self.static_encoder_type.startswith("param") else 0
         if self.pos_dims == 1:
@@ -2346,7 +2361,8 @@ class FNOModel(nn.Module):
         elif self.pos_dims == 2:
             self.modes = 12 if modes is None else modes
             self.width = 20 if width is None else width
-            self.model = FNO2d(self.modes, self.modes, width=self.width, input_size=self.input_size+static_latent_size_core, output_size=self.output_size)
+            # self.model = FNO2d(self.modes, self.modes, width=self.width, input_size=self.input_size+static_latent_size_core, output_size=self.output_size)
+            self.model = FNO2d(self.modes, self.modes, width=self.width, input_size=self.input_size+self.static_param_size, output_size=self.output_size)
         elif self.pos_dims == 3:
             self.modes = 8 if modes is None else modes
             self.width = 20 if width is None else width
@@ -2431,7 +2447,7 @@ class FNOModel(nn.Module):
             pred_idx_list = np.arange(pred_idx*args.temporal_bundle_steps, (pred_idx+1)*args.temporal_bundle_steps).tolist()
             y_idx_list = np.arange((k-1)*args.temporal_bundle_steps, k*args.temporal_bundle_steps).tolist()
             loss_k = loss_op(
-                preds, data.node_label, data.mask,
+                preds, data.node_label, mask=None if args.is_offmask else data.mask,
                 pred_idx=pred_idx_list,
                 y_idx=y_idx_list,
                 loss_type=args.loss_type,
@@ -2455,6 +2471,7 @@ class FNOModel(nn.Module):
         model_dict["temporal_bundle_steps"] = self.temporal_bundle_steps
         model_dict["static_encoder_type"] = self.static_encoder_type
         model_dict["static_latent_size"] = self.static_latent_size
+        model_dict["static_param_size"] = self.static_param_size
         model_dict["state_dict"] = to_cpu(self.state_dict())
         return model_dict
 
