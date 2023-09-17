@@ -263,8 +263,24 @@ def arg_parse():
                         help='encoder type of converting static featurs to latent vectors.')
     parser.add_argument('--max_grad_norm', type=float, default=-1,
                         help='maximul gradient L2 norm. Default -1 of not using the grad norm.')
-
-
+    parser.add_argument('--gnn_output_dim', type=int, default=32,
+                        help='dimension of node feature of output.')
+    parser.add_argument('--gnn_latent_dim', type=int, default=32,
+                        help='dimension of latent vector in gnn.')
+    parser.add_argument('--gnn_num_steps', type=int, default=3,
+                        help='number of message passing steps.')
+    parser.add_argument('--gnn_layer_norm', type=str2bool, nargs='?', const=True, default=False,
+                        help='whether or not use layer norm for gnn')
+    parser.add_argument('--gnn_activation', type=str,
+                        help='actibation function for gnn')
+    parser.add_argument('--gnn_diffMLP', type=str2bool, nargs='?', const=True, default=False,
+                        help='whether or not use different message passing layer for gnn')
+    parser.add_argument('--gnn_global_pooling', type=str,
+                        help='function name for global pooling')
+    parser.add_argument('--gnn_is_virtual', type=str2bool, nargs='?', const=True, default=True,
+                        help='whether or not use of virtual node')
+    
+    
     parser.set_defaults(
         exp_id="contrast",
         date_time="1-1",
@@ -410,6 +426,14 @@ def arg_parse():
         ## Static features:
         static_latent_size=0,
         static_encoder_type="None",
+        gnn_output_dim=64,
+        gnn_latent_dim=32,
+        gnn_num_steps=3,
+        gnn_layer_norm=False,
+        gnn_activation="relu",
+        gnn_diffMLP=False,
+        gnn_global_pooling="mean",
+        gnn_is_virtual=True,
     )
     add_rl_args(parser)
     try:

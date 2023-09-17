@@ -189,6 +189,7 @@ def get_data_next_step(
         # Append the computed node features:
         # [computed + static + dynamic]
         input_steps = data.node_feature[key].shape[-2]
+        # pdb.set_trace()
         if input_steps > 1:
             dynamic_features = torch.cat([data.node_feature[key][...,-dyn_dims[key]:], dynamic_features], -2)[...,-input_steps:,:]
         static_features = data.node_feature[key][..., -static_dims[key]-dyn_dims[key]:-dyn_dims[key]]

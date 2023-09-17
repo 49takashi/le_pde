@@ -23,12 +23,15 @@ import math
 import sys, os
 sys.path.append(os.path.join(os.path.dirname("__file__"), '..'))
 sys.path.append(os.path.join(os.path.dirname("__file__"), '..', '..'))
+sys.path.append("GraphPDE")
+
 from le_pde.datasets.load_dataset import load_data
 from le_pde.pytorch_net.util import get_repeat_interleave, forward_Runge_Kutta, tuple_add, tuple_mul, to_np_array, record_data, ddeepcopy as deepcopy, Attr_Dict, set_seed, pdump, pload, get_time, check_same_model_dict, print_banner, to_string
 from le_pde.utils import SpectralNorm, SpectralNormReg, requires_grad, process_data_for_CNN, get_regularization, get_batch_size, get_Hessian_penalty
 from le_pde.utils import detach_data, get_model_dict, loss_op_core, MLP, get_keys_values, flatten, get_elements, get_activation, to_cpu, to_tuple_shape, parse_multi_step, parse_act_name, parse_reg_type, loss_op, get_normalization, get_edge_index_kernel, loss_hybrid, stack_tuple_elements, add_noise, get_neg_loss, get_pos_dims_dict
 from le_pde.utils import p, seed_everything, is_diagnose, get_precision_floor, parse_string_idx_to_list, parse_loss_type, get_loss_ar, get_max_pool, get_data_next_step, get_LCM_input_shape, expand_same_shape, Sum, Mean, Channel_Gen, Flatten, Permute, Reshape, add_data_noise 
-
+from GraphPDE.gnn_module import mesh_PDE
+from torch_geometric.data import Data
 
 def get_conv_func(pos_dim, *args, **kwargs):
     if "reg_type_list" in kwargs:
@@ -1177,6 +1180,14 @@ def load_model(model_dict, device, multi_gpu=False, **kwargs):
             static_encoder_type=model_dict["static_encoder_type"] if "static_encoder_type" in model_dict else "None",
             static_latent_size=model_dict["static_latent_size"] if "static_latent_size" in model_dict else 0,
             static_param_size=model_dict["static_param_size"] if "static_param_size" in model_dict else 0,
+            gnn_output_dim=model_dict["gnn_output_dim"] if "gnn_output_dim" in model_dict else 32,
+            gnn_latent_dim=model_dict["gnn_latent_dim"] if "gnn_latent_dim" in model_dict else 32,
+            gnn_num_steps=model_dict["gnn_num_steps"] if "gnn_num_steps" in model_dict else 3,
+            gnn_layer_norm=model_dict["gnn_layer_norm"] if "gnn_layer_norm" in model_dict else False,
+            gnn_activation=model_dict["gnn_activation"] if "gnn_activation" in model_dict else "relu",
+            gnn_diffMLP=model_dict["gnn_diffMLP"] if "gnn_diffMLP" in model_dict else False,
+            gnn_global_pooling=model_dict["gnn_global_pooling"] if "gnn_global_pooling" in model_dict else "mean",
+            gnn_is_virtual=model_dict["gnn_is_virtual"] if "gnn_is_virtual" in model_dict else True,
         )
     elif model_type == "Contrastive":
         #pdb.set_trace()
@@ -1255,6 +1266,7 @@ def get_model(
     if "node_feature" in data_eg:
         # The data object contains the actual data:
         output_size = {key: data_eg.node_label[key].shape[-1] + 1 if key in part_keys else data_eg.node_label[key].shape[-1] for key in data_eg.node_label}
+        # pdb.set_trace()
         input_size = {key: np.prod(data_eg.node_feature[key].shape[-2:]) for key in data_eg.node_feature}
         if args.static_encoder_type != "None":
             if args.static_encoder_type.startswith("param"):
@@ -1323,6 +1335,11 @@ def get_model(
     elif args.algo.startswith("fno"):
         if args.static_encoder_type.startswith("param"):
             static_param_size = data_eg.param["n0"].reshape(1, -1).shape[-1]
+        else:
+            static_param_size = 0
+        if (args.static_encoder_type.startswith("param")) and ("gnn" in args.static_encoder_type):
+            # pdb.set_trace()
+            input_size["n0"] = np.prod([data_eg.node_feature["n0"].shape[-2], dyn_dims["n0"]])
         """fno-w20-m12: fno with width=20 and modes=12. Default"""
         algo_dict = {}
         for ele in args.algo.split("-")[1:]:
@@ -1342,6 +1359,14 @@ def get_model(
             static_encoder_type=args.static_encoder_type,
             static_latent_size=args.static_latent_size,
             static_param_size = static_param_size,
+            gnn_output_dim = args.gnn_output_dim,
+            gnn_latent_dim = args.gnn_latent_dim,
+            gnn_num_steps = args.gnn_num_steps,
+            gnn_layer_norm = args.gnn_layer_norm,
+            gnn_activation = args.gnn_activation,
+            gnn_diffMLP = args.gnn_diffMLP,
+            gnn_global_pooling = args.gnn_global_pooling,
+            gnn_is_virtual = args.gnn_is_virtual,
         ).to(device)
     else:
         raise Exception("Algo {} is not supported!".format(args.algo))
@@ -2342,6 +2367,14 @@ class FNOModel(nn.Module):
         static_encoder_type="None",
         static_latent_size=0,
         static_param_size=0,
+        gnn_output_dim=32,
+        gnn_latent_dim=32,
+        gnn_num_steps=3,
+        gnn_layer_norm=False,
+        gnn_activation="relu",
+        gnn_diffMLP=False,
+        gnn_global_pooling="mean",
+        gnn_is_virtual=True,
     ):
         super().__init__()
         self.input_size = input_size  # steps*feature_size
@@ -2354,6 +2387,18 @@ class FNOModel(nn.Module):
         self.static_param_size = static_param_size
         self.pos_dims = len(input_shape)
         static_latent_size_core = self.static_latent_size if self.static_encoder_type.startswith("param") else 0
+        if (self.static_encoder_type.startswith("param")) and ("gnn" in self.static_encoder_type):
+            self.gnn_output_dim = gnn_output_dim  ### 3 has to be variable
+            self.gnn_latent_dim = gnn_latent_dim
+            self.gnn_num_steps = gnn_num_steps
+            self.gnn_layer_norm = gnn_layer_norm
+            self.gnn_activation = gnn_activation
+            self.gnn_diffMLP = gnn_diffMLP
+            self.gnn_global_pooling = gnn_global_pooling
+            self.gnn_is_virtual=gnn_is_virtual
+            self.mpnn = mesh_PDE(2, 2, self.gnn_output_dim, latent_dim=self.gnn_latent_dim, 
+                                 num_steps=self.gnn_num_steps, layer_norm=self.gnn_layer_norm, 
+                                 nl = self.gnn_activation, diffMLP = self.gnn_diffMLP) 
         if self.pos_dims == 1:
             self.modes = 16 if modes is None else modes
             self.width = 64 if width is None else width
@@ -2362,7 +2407,12 @@ class FNOModel(nn.Module):
             self.modes = 12 if modes is None else modes
             self.width = 20 if width is None else width
             # self.model = FNO2d(self.modes, self.modes, width=self.width, input_size=self.input_size+static_latent_size_core, output_size=self.output_size)
-            self.model = FNO2d(self.modes, self.modes, width=self.width, input_size=self.input_size+self.static_param_size, output_size=self.output_size)
+            if (self.static_encoder_type.startswith("param")) and ("gnn" in self.static_encoder_type):
+                # pdb.set_trace()
+                ### self.input_size has to be changed, and 
+                self.model = FNO2d(self.modes, self.modes, width=self.width, input_size=self.input_size+self.gnn_output_dim, output_size=self.output_size)
+            else:
+                self.model = FNO2d(self.modes, self.modes, width=self.width, input_size=self.input_size+self.static_param_size, output_size=self.output_size)
         elif self.pos_dims == 3:
             self.modes = 8 if modes is None else modes
             self.width = 20 if width is None else width
@@ -2395,9 +2445,50 @@ class FNOModel(nn.Module):
             static_features = x[...,-self.temporal_bundle_steps:,:-dyn_dims]  # [B, (H, W, D), 1, static_dims]
         pos_dims = len(self.input_shape)
         assert pos_dims in [1,2,3]
+        if (self.static_encoder_type.startswith("param")) and ("gnn" in self.static_encoder_type):
+            # pdb.set_trace()
+            x = x[..., static_dims:]
+            x_feature_size = x.shape[-1]
         x = x.flatten(start_dim=1+pos_dims) # x: [B, (H, W, D), steps*feature_size]  , [20,64,64,10]
         if self.static_encoder_type.startswith("param"):
-            static_param = data.param["n0"].reshape(batch_size, -1)  # [B, self.static_latent_size]
+            if "gnn" in self.static_encoder_type:
+                # pdb.set_trace()
+                ### node_feature ###
+                x_pyg = data.param["n0"].reshape(batch_size, -1)[0,:].reshape(40,2)   # next time, do 80 instead of 40
+                
+                ### edge index and edge feature ###
+                node_index = torch.tensor([i for i in range(40)], device=x_pyg.device)
+                roll_node_index = torch.roll(node_index, 1)
+                edge_index = torch.cat([torch.stack([node_index, roll_node_index]), torch.stack([roll_node_index, node_index])], -1)
+
+                if self.gnn_is_virtual:
+                    ### Add virtual node ###
+                    virtual_node = torch.tensor([[1.,1.]], device=x_pyg.device)
+                    x_pyg = torch.cat((x_pyg, virtual_node), 0)
+
+                    ### Create virtual edges ###
+                    virtual_node_index = torch.tensor([40], device=x_pyg.device).repeat(40)
+                    virtual_edge_index = torch.cat([torch.stack([node_index, virtual_node_index]), torch.stack([virtual_node_index, node_index])], -1)
+
+                    ### Add virtual edges ###
+                    edge_index = torch.cat((edge_index, virtual_edge_index), 1)
+                                
+                edge_attr = x_pyg[edge_index[0]] - x_pyg[edge_index[1]]
+                
+                ### Define graph ###
+                graph = Data(x=x_pyg, edge_index=edge_index, edge_attr=edge_attr) 
+                # pdb.set_trace()
+                if self.gnn_global_pooling == "mean":
+                    single_static_param = torch.mean(self.mpnn(graph).x, dim=0)
+                elif self.gnn_global_pooling == "max":
+                    single_static_param = torch.max(self.mpnn(graph).x, dim=0)[0]
+                elif self.gnn_global_pooling == "sum":
+                    single_static_param = torch.sum(self.mpnn(graph).x, dim=0)
+                else:
+                    raise
+                static_param = single_static_param.repeat(batch_size, 1)
+            else:
+                static_param = data.param["n0"].reshape(batch_size, -1)  # [B, self.static_latent_size]
             static_param_expand = static_param
             for jj in range(pos_dims):
                 static_param_expand = static_param_expand[...,None,:]
@@ -2407,6 +2498,7 @@ class FNOModel(nn.Module):
         is_multistep_detach = kwargs["is_multistep_detach"] if "is_multistep_detach" in kwargs else False
 
         for k in range(1, max_pred_steps + 1):
+            # pdb.set_trace()
             # x: [B, (H, W, D), steps*feature_size]
             if self.static_encoder_type.startswith("param"):
                 pred = self.model(torch.cat([static_param_expand, x], -1))
@@ -2416,8 +2508,12 @@ class FNOModel(nn.Module):
             pred_reshape = pred.reshape(*pred.shape[:1+pos_dims], self.temporal_bundle_steps, dyn_dims)  # [B, (H, W, D), self.temporal_bundle_steps, dyn_dims]
             if k in pred_steps:
                 preds["n0"].append(pred_reshape)
-            if static_dims > 0:
-                pred_reshape = torch.cat([static_features, pred_reshape], -1)  # [B, (H, W, D), 1, x_feature_size]
+            if (self.static_encoder_type.startswith("param")) and ("gnn" in self.static_encoder_type):
+                # pdb.set_trace()
+                pred_reshape = pred_reshape
+            else:
+                if static_dims > 0:
+                    pred_reshape = torch.cat([static_features, pred_reshape], -1)  # [B, (H, W, D), 1, x_feature_size]
             new_x_reshape = torch.cat([x_reshape, pred_reshape], -2)[...,-time_steps:,:]   # [B, H, W, input_steps, x_feature_size]
             x = new_x_reshape.flatten(start_dim=1+pos_dims)  # x:   # [B, (H, W, D), input_steps*x_feature_size]
             if is_multistep_detach:
@@ -2473,6 +2569,15 @@ class FNOModel(nn.Module):
         model_dict["static_latent_size"] = self.static_latent_size
         model_dict["static_param_size"] = self.static_param_size
         model_dict["state_dict"] = to_cpu(self.state_dict())
+        if (self.static_encoder_type.startswith("param")) and ("gnn" in self.static_encoder_type):
+            model_dict["gnn_output_dim"] = self.gnn_output_dim
+            model_dict["gnn_latent_dim"] = self.gnn_latent_dim
+            model_dict["gnn_num_steps"] = self.gnn_num_steps
+            model_dict["gnn_layer_norm"] = self.gnn_layer_norm
+            model_dict["gnn_activation"] = self.gnn_activation
+            model_dict["gnn_diffMLP"] = self.gnn_diffMLP
+            model_dict["gnn_global_pooling"] = self.gnn_global_pooling
+            model_dict["gnn_is_virtual"] = self.gnn_is_virtual
         return model_dict
 
 
