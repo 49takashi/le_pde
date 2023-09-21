@@ -136,7 +136,9 @@ def load_data(args, **kwargs):
         "_normpos_{}".format(args.is_normalize_pos) if args.is_normalize_pos is False else "",
     ))
     is_to_deepsnap = True
+    is_torch_geometric = False
     if (os.path.isfile(filename_train_val) or args.is_test_only) and os.path.isfile(filename_test) and args.n_train == "-1":
+    # if False:
         if not args.is_test_only:
             p.print(f"Loading {filename_train_val}")
             loaded = pickle.load(open(filename_train_val, "rb"))
@@ -152,7 +154,6 @@ def load_data(args, **kwargs):
         p.print("{} does not exist. Generating...".format(filename_test))
         is_save = True  # If True, will save generated deepsnap dataset.
 
-        is_torch_geometric = False
         if "fno" in args.dataset:
             if not args.is_test_only:
                 pyg_dataset_train_val = FNOData(
@@ -200,7 +201,6 @@ def load_data(args, **kwargs):
                     is_traj=False,
                     is_testdata=False,
             )
-            is_torch_geometric = True
         elif args.dataset.startswith("movinggas"):
             if not args.is_test_only:
                 pyg_dataset_train_val = MovingGas(
@@ -336,11 +336,12 @@ def load_data(args, **kwargs):
 
 
     # Split into train, val and test:
-    
+    if "ellipse" in args.dataset:
+        is_torch_geometric = True
     if is_torch_geometric:
-        train_loader = DataLoader(dataset_train_val, batch_size = args.batch_size, shuffle = True, pin_memory = True, num_workers=args.n_workers, drop_last=True)
+        train_loader = pyg_DataLoader(dataset_train_val, batch_size = args.batch_size, shuffle = True, pin_memory = True, num_workers=args.n_workers, drop_last=False)
         val_loader = None
-        test_loader = DataLoader(dataset_test, batch_size = args.batch_size, shuffle = False, pin_memory = True, num_workers=args.n_workers, drop_last=False)
+        test_loader = pyg_DataLoader(dataset_test, batch_size = args.batch_size, shuffle = False, pin_memory = True, num_workers=args.n_workers, drop_last=False)
         return (dataset_train_val, dataset_test), (train_loader, val_loader, test_loader)
 
     else:

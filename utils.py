@@ -704,6 +704,8 @@ def to_tuple_shape(item):
     """Transform [tuple] or tuple into tuple."""
     if isinstance(item, list) or isinstance(item, torch.Tensor):
         item = item[0]
+    if isinstance(item, list):
+        item = tuple(item)
     assert isinstance(item, tuple) or isinstance(item, Number) or isinstance(item, torch.Tensor) or isinstance(item, str) or isinstance(item, bool)
     return item
 
@@ -2367,3 +2369,25 @@ def update_legacy_default_hyperparam(Dict):
     if "seed" in Dict and Dict["seed"] is None:
         Dict["seed"] = -1
     return Dict
+
+
+def PyG_to_Attr_Dict(data):
+    attr_dict = Attr_Dict(
+        node_feature={"n0": data.x},
+        node_label={"n0": data.y},
+        mask={"n0": data.mask},
+        # ptr={"n0": data.ptr},
+        param={"n0": data.param},
+        sim_id={"n0": data.sim_id},
+        time_id={"n0": data.time_id},
+        x_bound={"n0": data.x_bound},
+        x_pos={"n0": data.x_pos},
+        y_bound={"n0": data.y_bound},
+        edge_index={("n0","0","n0"): data.edge_index},
+        original_shape=(("n0",to_tuple_shape(data.original_shape)),),
+        dyn_dims=(("n0", to_tuple_shape(data.dyn_dims)),),
+        compute_func=None,
+        grid_keys=("n0",),
+        part_keys=(),
+    )
+    return attr_dict
