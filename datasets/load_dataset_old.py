@@ -136,8 +136,9 @@ def load_data(args, **kwargs):
         "_normpos_{}".format(args.is_normalize_pos) if args.is_normalize_pos is False else "",
     ))
     is_to_deepsnap = True
-    # if (os.path.isfile(filename_train_val) or args.is_test_only) and os.path.isfile(filename_test) and args.n_train == "-1":
-    if False:
+    is_torch_geometric = False
+    if (os.path.isfile(filename_train_val) or args.is_test_only) and os.path.isfile(filename_test) and args.n_train == "-1":
+    # if False:
         if not args.is_test_only:
             p.print(f"Loading {filename_train_val}")
             loaded = pickle.load(open(filename_train_val, "rb"))
@@ -183,7 +184,11 @@ def load_data(args, **kwargs):
                     is_y_diff=args.is_y_diff,
                     is_train=True,
                     is_y_variable_length=args.is_y_variable_length,
+                    show_missing_files=False,
+                    is_traj=False,
+                    is_testdata=False,
                 )
+
             pyg_dataset_test = Ellipse(
                 dataset=args.dataset,
                 input_steps=args.input_steps * args.temporal_bundle_steps,
@@ -192,8 +197,10 @@ def load_data(args, **kwargs):
                 is_y_diff=args.is_y_diff,
                 is_train=False,
                 is_y_variable_length=args.is_y_variable_length,
+                show_missing_files=False,
+                    is_traj=False,
+                    is_testdata=False,
             )
-            is_to_deepsnap = False
         elif args.dataset.startswith("movinggas"):
             if not args.is_test_only:
                 pyg_dataset_train_val = MovingGas(
@@ -299,7 +306,7 @@ def load_data(args, **kwargs):
             p.print(":")
 
         # Transform to deepsnap format:
-        if is_to_deepsnap:
+        if (not is_torch_geometric) and is_to_deepsnap:
             if not args.is_test_only:
                 if "pyg_dataset_train_val" in locals():
                     dataset_train_val = to_deepsnap(pyg_dataset_train_val, args)
@@ -329,38 +336,47 @@ def load_data(args, **kwargs):
 
 
     # Split into train, val and test:
-    collate_fn = deepsnap_Batch.collate() if is_to_deepsnap else Batch(is_absorb_batch=True).collate()
-    if not args.is_test_only:
-        if args.n_train == "-1":
-            if "dataset_train" in locals() and "dataset_val" in locals():
-                dataset_train_val = (dataset_train, dataset_val)
-            elif args.dataset_split_type == "standard":
-                if args.dataset.startswith("VL") or args.dataset.startswith("PL") or args.dataset.startswith("PIL"):
-                    train_idx, val_idx = get_train_val_idx(len(dataset_train_val), chunk_size=200)
-                    dataset_train = dataset_train_val[train_idx]
-                    dataset_val = dataset_train_val[val_idx]
-                else:
-                    num_train = int(len(dataset_train_val) * train_fraction)
-                    dataset_train, dataset_val = dataset_train_val[:num_train], dataset_train_val[num_train:]
-            elif args.dataset_split_type == "random":
-                train_idx, val_idx = get_train_val_idx_random(len(dataset_train_val), train_fraction=train_fraction)
-                dataset_train, dataset_val = dataset_train_val[train_idx], dataset_train_val[val_idx]
-            elif args.dataset_split_type == "order":
-                n_train = int(len(dataset_train_val) * train_fraction)
-                dataset_train, dataset_val = dataset_train_val[:n_train], dataset_train_val[n_train:]
-            else:
-                raise Exception("dataset_split_type '{}' is not valid!".format(args.dataset_split_type))
-        else:
-            # train, val, test are all the same as designated by args.n_train:
-            dataset_train = deepcopy(dataset_train_val) if is_to_deepsnap else dataset_train_val
-            dataset_val = deepcopy(dataset_train_val) if is_to_deepsnap else dataset_train_val
-        train_loader = DataLoader(dataset_train, num_workers=args.n_workers, collate_fn=collate_fn,
-                                  batch_size=args.batch_size, shuffle=True if args.dataset_split_type!="order" else False, drop_last=True)
-        val_loader = DataLoader(dataset_val, num_workers=args.n_workers, collate_fn=collate_fn,
-                                batch_size=args.val_batch_size if not args.algo.startswith("supn") else 1, shuffle=False, drop_last=False)
+    if "ellipse" in args.dataset:
+        is_torch_geometric = True
+    if is_torch_geometric:
+        train_loader = pyg_DataLoader(dataset_train_val, batch_size = args.batch_size, shuffle = True, pin_memory = True, num_workers=args.n_workers, drop_last=False)
+        val_loader = None
+        test_loader = pyg_DataLoader(dataset_test, batch_size = args.batch_size, shuffle = False, pin_memory = True, num_workers=args.n_workers, drop_last=False)
+        return (dataset_train_val, dataset_test), (train_loader, val_loader, test_loader)
+
     else:
-        dataset_train_val = None
-        train_loader, val_loader = None, None
-    test_loader = DataLoader(dataset_test, num_workers=args.n_workers, collate_fn=collate_fn,
-                             batch_size=args.val_batch_size if not args.algo.startswith("supn") else 1, shuffle=False, drop_last=False)
+        collate_fn = deepsnap_Batch.collate() if is_to_deepsnap else Batch(is_absorb_batch=True).collate()
+        if not args.is_test_only:
+            if args.n_train == "-1":
+                if "dataset_train" in locals() and "dataset_val" in locals():
+                    dataset_train_val = (dataset_train, dataset_val)
+                elif args.dataset_split_type == "standard":
+                    if args.dataset.startswith("VL") or args.dataset.startswith("PL") or args.dataset.startswith("PIL"):
+                        train_idx, val_idx = get_train_val_idx(len(dataset_train_val), chunk_size=200)
+                        dataset_train = dataset_train_val[train_idx]
+                        dataset_val = dataset_train_val[val_idx]
+                    else:
+                        num_train = int(len(dataset_train_val) * train_fraction)
+                        dataset_train, dataset_val = dataset_train_val[:num_train], dataset_train_val[num_train:]
+                elif args.dataset_split_type == "random":
+                    train_idx, val_idx = get_train_val_idx_random(len(dataset_train_val), train_fraction=train_fraction)
+                    dataset_train, dataset_val = dataset_train_val[train_idx], dataset_train_val[val_idx]
+                elif args.dataset_split_type == "order":
+                    n_train = int(len(dataset_train_val) * train_fraction)
+                    dataset_train, dataset_val = dataset_train_val[:n_train], dataset_train_val[n_train:]
+                else:
+                    raise Exception("dataset_split_type '{}' is not valid!".format(args.dataset_split_type))
+            else:
+                # train, val, test are all the same as designated by args.n_train:
+                dataset_train = deepcopy(dataset_train_val) if is_to_deepsnap else dataset_train_val
+                dataset_val = deepcopy(dataset_train_val) if is_to_deepsnap else dataset_train_val
+            train_loader = DataLoader(dataset_train, num_workers=args.n_workers, collate_fn=collate_fn,
+                                      batch_size=args.batch_size, shuffle=True if args.dataset_split_type!="order" else False, drop_last=True)
+            val_loader = DataLoader(dataset_val, num_workers=args.n_workers, collate_fn=collate_fn,
+                                    batch_size=args.val_batch_size if not args.algo.startswith("supn") else 1, shuffle=False, drop_last=False)
+        else:
+            dataset_train_val = None
+            train_loader, val_loader = None, None
+        test_loader = DataLoader(dataset_test, num_workers=args.n_workers, collate_fn=collate_fn,
+                                 batch_size=args.val_batch_size if not args.algo.startswith("supn") else 1, shuffle=False, drop_last=False)
     return (dataset_train_val, dataset_test), (train_loader, val_loader, test_loader)

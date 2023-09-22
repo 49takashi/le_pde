@@ -2386,7 +2386,7 @@ def PyG_to_Attr_Dict(data):
         edge_index={("n0","0","n0"): data.edge_index},
         original_shape=(("n0",to_tuple_shape(data.original_shape)),),
         dyn_dims=(("n0", to_tuple_shape(data.dyn_dims)),),
-        compute_func=(("n0", (0, None)),),
+        compute_func=None,
         grid_keys=("n0",),
         part_keys=(),
     )
